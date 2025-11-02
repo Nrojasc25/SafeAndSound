@@ -45,7 +45,7 @@ Andorid/iOS:
 flutter run
 ```
 ### [4] Authentication Notes
-* sign up requires email verification
-* login will prompt users if their email is not verified
-* users with existing accounts can sign in directly.
-* password visibility toggle is available on both login and sing-up screens. 
+* Sign up requires email verification
+* Login will prompt users if their email is not verified
+* Users with existing accounts can sign in directly.
+* Password visibility toggle is available on both login and sing-up screens. 
