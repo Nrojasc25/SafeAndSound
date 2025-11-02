@@ -1,0 +1,65 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code settings (uncomment if you want to include VSCode configs)
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+# Coverage reports
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Firebase sensitive files
+firebase_options.dart
+
+# OS-specific files
+# macOS
+*.DS_Store
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Flutter generated files
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Other generated files
+.idea/
+*.iml
+*.hprof
