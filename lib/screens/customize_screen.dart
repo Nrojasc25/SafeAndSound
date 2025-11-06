@@ -155,7 +155,7 @@ class _CustomizeScreenState extends State<CustomizeScreen> {
   }
 
   Widget _colorSelector(AlertSetting s) {
-    final colors = [Colors.blue, Colors.green, Colors.red, Colors.purple, Colors.orange, Colors.teal];
+    final colors = [Colors.blue, Colors.green, Colors.red, Colors.yellow];
     return Wrap(
       spacing: 8,
       children: colors.map((color) {
