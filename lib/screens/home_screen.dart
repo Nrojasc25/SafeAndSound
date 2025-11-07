@@ -60,9 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Safe&Sound'),
         actions: [
-          IconButton(
-              onPressed: () => Navigator.pushNamed(context, '/device'),
-              icon: const Icon(Icons.bluetooth)),
+          // Removed Bluetooth IconButton
           IconButton(
               onPressed: () => Navigator.pushNamed(context, '/customize'),
               icon: const Icon(Icons.settings)),

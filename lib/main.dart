@@ -7,7 +7,6 @@ import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/customize_screen.dart';
 import 'screens/log_screen.dart';
-import 'screens/device_screen.dart';
 import 'models/app_state.dart';
 
 Future<void> main() async {
@@ -18,7 +17,7 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Explicitly initialize Realtime Database (with your project URL)
+  // Explicitly initialize Realtime Database
   FirebaseDatabase.instanceFor(
     app: firebaseApp,
     databaseURL: "https://safeandsound-ea1e1-default-rtdb.firebaseio.com",
@@ -45,13 +44,13 @@ class _SafeAndSoundAppState extends State<SafeAndSoundApp> {
       initialRoute: '/',
       routes: {
         '/': (ctx) => LoginScreen(
-              appState: appState,  // ✅ Pass AppState here
+              appState: appState,  // Pass AppState
               onLogin: () => Navigator.pushReplacementNamed(ctx, '/home'),
             ),
         '/home': (ctx) => HomeScreen(appState: appState),
         '/customize': (ctx) => CustomizeScreen(appState: appState),
         '/logs': (ctx) => LogScreen(appState: appState),
-        '/device': (ctx) => DeviceScreen(appState: appState),
+        // Removed '/device' route
       },
     );
   }
