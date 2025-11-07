@@ -55,6 +55,8 @@ Desktop.ini
 *.pyc
 *.swp
 *.hprof
+secrets.h
+
 
 # =========================
 # Android Studio build artifacts
