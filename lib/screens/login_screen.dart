@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/app_state.dart';
+import '../models/settings.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final VoidCallback onLogin;
-  const LoginScreen({Key? key, required this.onLogin}) : super(key: key);
+  final AppState appState; // AppState instance
+  const LoginScreen({Key? key, required this.onLogin, required this.appState}) : super(key: key);
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -29,8 +32,9 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passCtrl.text.trim(),
       );
 
-      // Check if email is verified
-      if (!credential.user!.emailVerified) {
+      final user = credential.user!;
+      if (!user.emailVerified) {
+        // Email not verified
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Email not verified. Please check your inbox.'),
@@ -38,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
               label: 'Resend',
               onPressed: () async {
                 try {
-                  await credential.user!.sendEmailVerification();
+                  await user.sendEmailVerification();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Verification email resent!')),
                   );
@@ -52,6 +56,21 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       } else {
+        // ✅ Store UID in AppState
+        widget.appState.uid = user.uid;
+
+        // ✅ Fetch user settings from Firebase
+        try {
+          final settings = await AlertSetting.fetchFromFirebase(user.uid);
+          setState(() {
+            widget.appState.settings = settings;
+          });
+          print("Loaded ${settings.length} settings for UID ${user.uid}");
+        } catch (e) {
+          print("Error fetching settings: $e");
+        }
+
+        // ✅ Navigate to home
         widget.onLogin();
       }
     } on FirebaseAuthException catch (e) {
@@ -72,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _passCtrl.clear();
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => SignUpScreen()),
+      MaterialPageRoute(builder: (context) => const SignUpScreen()),
     );
   }
 

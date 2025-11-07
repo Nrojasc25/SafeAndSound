@@ -3,6 +3,7 @@ import 'alert_item.dart';
 import 'settings.dart';
 
 class AppState {
+  String? uid; // Store Firebase UID
   List<AlertItem> logs = [];
   List<AlertSetting> settings = [];
   String pairedDeviceName = 'Not paired';
@@ -11,7 +12,6 @@ class AppState {
 
   AppState();
 
-  // Sample data for testing
   factory AppState.sample() {
     final s = AppState();
     s.settings = [
@@ -30,7 +30,6 @@ class AppState {
     return s;
   }
 
-  // Convert settings to a List for Firebase to preserve order
   List<Map<String, dynamic>> settingsToList() {
     return settings.map((s) => {
       'type': s.type,
@@ -39,7 +38,6 @@ class AppState {
     }).toList();
   }
 
-  // Load settings from List to preserve order
   void loadSettingsFromList(List<dynamic> data) {
     settings.clear();
     for (var item in data) {
@@ -52,7 +50,6 @@ class AppState {
     ensureDefaultSounds();
   }
 
-  // Convert logs to a Map for Firebase
   Map<String, dynamic> logsToMap() {
     final Map<String, dynamic> map = {};
     for (int i = 0; i < logs.length; i++) {
@@ -64,7 +61,6 @@ class AppState {
     return map;
   }
 
-  // Load logs from Firebase map
   void loadLogsFromMap(Map<dynamic, dynamic> data) {
     logs.clear();
     data.forEach((key, value) {
@@ -75,7 +71,6 @@ class AppState {
     });
   }
 
-  // Ensure default sounds exist
   void ensureDefaultSounds() {
     final defaults = ['Fire Alarm', 'Siren', 'Timer'];
     for (var type in defaults) {

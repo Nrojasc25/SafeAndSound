@@ -10,16 +10,15 @@ import 'screens/log_screen.dart';
 import 'screens/device_screen.dart';
 import 'models/app_state.dart';
 
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ Initialize Firebase
+  // Initialize Firebase
   final firebaseApp = await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // ✅ Explicitly initialize Realtime Database (with your project URL)
+  // Explicitly initialize Realtime Database (with your project URL)
   FirebaseDatabase.instanceFor(
     app: firebaseApp,
     databaseURL: "https://safeandsound-ea1e1-default-rtdb.firebaseio.com",
@@ -36,7 +35,7 @@ class SafeAndSoundApp extends StatefulWidget {
 }
 
 class _SafeAndSoundAppState extends State<SafeAndSoundApp> {
-  final AppState appState = AppState.sample();
+  final AppState appState = AppState(); // Single shared AppState
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +45,7 @@ class _SafeAndSoundAppState extends State<SafeAndSoundApp> {
       initialRoute: '/',
       routes: {
         '/': (ctx) => LoginScreen(
+              appState: appState,  // ✅ Pass AppState here
               onLogin: () => Navigator.pushReplacementNamed(ctx, '/home'),
             ),
         '/home': (ctx) => HomeScreen(appState: appState),

@@ -1,44 +1,113 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import '../models/app_state.dart';
 import '../models/alert_item.dart';
+import 'package:intl/intl.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final AppState appState;
-  HomeScreen({required this.appState});
+  const HomeScreen({Key? key, required this.appState}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  DatabaseReference? alertsRef;
+  Stream<DatabaseEvent>? alertsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _initFirebaseListener();
+  }
+
+  void _initFirebaseListener() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    alertsRef = FirebaseDatabase.instance.ref('users/${user.uid}/alerts');
+    alertsStream = alertsRef!.onValue;
+
+    alertsStream!.listen((DatabaseEvent event) {
+      final data = event.snapshot.value;
+      widget.appState.logs.clear();
+
+      if (data != null && data is Map) {
+        data.forEach((key, value) {
+          widget.appState.logs.add(AlertItem(
+            type: value['sound'] ?? 'Unknown',
+            time: value['timestamp'] != null
+                ? DateTime.fromMillisecondsSinceEpoch(
+                    value['timestamp'], isUtc: true)
+                    .toLocal()
+                : DateTime.now(),
+          ));
+        });
+        widget.appState.logs.sort((a, b) => b.time.compareTo(a.time));
+      }
+
+      setState(() {}); // rebuild HomeScreen when logs update
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final recentAlerts = widget.appState.logs.take(5).toList();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Safe&Sound'),
         actions: [
-          IconButton(onPressed: () => Navigator.pushNamed(context, '/device'), icon: Icon(Icons.bluetooth)),
-          IconButton(onPressed: () => Navigator.pushNamed(context, '/customize'), icon: Icon(Icons.settings)),
+          IconButton(
+              onPressed: () => Navigator.pushNamed(context, '/device'),
+              icon: const Icon(Icons.bluetooth)),
+          IconButton(
+              onPressed: () => Navigator.pushNamed(context, '/customize'),
+              icon: const Icon(Icons.settings)),
         ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Hello — quick recent alerts', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.builder(
-                itemCount: appState.logs.length,
-                itemBuilder: (ctx, i) {
-                  final AlertItem item = appState.logs[i];
-                  return ListTile(
-                    leading: Icon(_iconForType(item.type)),
-                    title: Text(item.type),
-                    subtitle: Text(_formatTime(item.time)),
-                    onTap: () {},
-                  );
-                },
+            Center(
+              child: const Text(
+                'Hello — quick recent alerts',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
             ),
-            ElevatedButton(
-              onPressed: () => Navigator.pushNamed(context, '/logs'),
-              child: const Text('View Full Log'),
+            const SizedBox(height: 12),
+            Expanded(
+              child: recentAlerts.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No detected alerts yet',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: recentAlerts.length,
+                      itemBuilder: (ctx, i) {
+                        final AlertItem item = recentAlerts[i];
+                        return ListTile(
+                          leading: Icon(_iconForType(item.type)),
+                          title: Text(item.type),
+                          subtitle: Text(
+                            DateFormat('yyyy-MM-dd HH:mm:ss')
+                                .format(item.time),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.pushNamed(context, '/logs'),
+                child: const Text('View Full Log'),
+              ),
             ),
           ],
         ),
@@ -57,12 +126,5 @@ class HomeScreen extends StatelessWidget {
       default:
         return Icons.volume_up;
     }
-  }
-
-  String _formatTime(DateTime t) {
-    final now = DateTime.now();
-    final diff = now.difference(t);
-    if (diff.inDays >= 1) return '${diff.inDays}d ${t.hour}:${t.minute.toString().padLeft(2,'0')}';
-    return '${t.hour}:${t.minute.toString().padLeft(2,'0')}';
   }
 }
