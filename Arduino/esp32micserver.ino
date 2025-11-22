@@ -6,16 +6,16 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <WiFi.h>
-#include <Firebase_ESP_Client.h>
+#include <SafeSound_AudioClassifier_inferencing.h>
 
 // ------------------- I2S Configuration -------------------
-#define I2S_WS   25
-#define I2S_SD   32
-#define I2S_SCK  33
+#define I2S_WS   3
+#define I2S_SD   4
+#define I2S_SCK  2
+#define MIC_LR_PIN 5   // any GPIO
 #define I2S_PORT I2S_NUM_0
 
-#define NUM_SAMPLES 64
+#define CHUNK_SAMPLES 256
 
 // ------------------- BLE Configuration -------------------
 #define SERVICE_UUID        "7b58dad6-aa86-4330-9390-c2edf92f50ef"
@@ -25,25 +25,10 @@ BLEServer* pServer = nullptr;
 BLECharacteristic* pCharacteristic = nullptr;
 bool deviceConnected = false;
 
-// ------------------- WiFi + Firebase -------------------
-
-FirebaseData fbdo;
-FirebaseData fbdoPush;
-FirebaseAuth auth;
-FirebaseConfig config;
-
 // ------------------- Audio Settings -------------------
 unsigned long lastAlert = 0;
 const unsigned long ALERT_COOLDOWN = 2000;
 
-const char* labels[] = {"Fire Alarm","Siren","Microwave","Timer"};
-uint8_t simIndex = 0;
-
-// ------------------- User Settings -------------------
-struct Setting { char type[16]; char color[9]; char vibration[9]; };
-#define MAX_SETTINGS 5
-Setting settingsList[MAX_SETTINGS];
-size_t settingsCount = 0;
 
 // ------------------- BLE Callbacks -------------------
 class MyServerCallbacks : public BLEServerCallbacks {
@@ -65,14 +50,16 @@ void i2s_install() {
   Serial.println("Installing I2S driver...");
   const i2s_config_t cfg = {
     .mode=i2s_mode_t(I2S_MODE_MASTER|I2S_MODE_RX),
-    .sample_rate=44100,
-    .bits_per_sample=i2s_bits_per_sample_t(16),
+    .sample_rate=16000,
+    .bits_per_sample=I2S_BITS_PER_SAMPLE_32BIT,
     .channel_format=I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format=i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
-    .intr_alloc_flags=0,
-    .dma_buf_count=8,
-    .dma_buf_len=64,
-    .use_apll=false
+    .communication_format=I2S_COMM_FORMAT_I2S,
+    .intr_alloc_flags=ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count=4,
+    .dma_buf_len=CHUNK_SAMPLES,
+    .use_apll=false,
+    .tx_desc_auto_clear = false,
+    .fixed_mclk = 0
   };
   esp_err_t err = i2s_driver_install(I2S_PORT,&cfg,0,NULL);
   if (err == ESP_OK) Serial.println("I2S driver installed successfully");
@@ -92,112 +79,150 @@ void i2s_setpin() {
   else Serial.printf("I2S pin setup failed. Code: %d\n", err);
 }
 
-// ------------------- Firebase Functions -------------------
-void setupFirebase() {
-  Serial.println("Initializing Firebase...");
-  config.api_key = API_KEY;
-  config.database_url = DATABASE_URL;
-  auth.user.email=USER_EMAIL;
-  auth.user.password=USER_PASSWORD;
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
-  Serial.println("Firebase initialized and WiFi reconnect enabled");
-}
-
-void loadUserSettings() {
-  Serial.println("Loading user settings from Firebase...");
-  settingsCount = 0;
-  for(int i=0;i<MAX_SETTINGS;i++){
-    char path[80]; snprintf(path,sizeof(path),"/users/%s/settings/%d",USER_ID,i);
-    Serial.printf("Fetching: %s\n", path);
-    if(Firebase.RTDB.getJSON(&fbdo,path)){
-      String js=fbdo.jsonString();
-      if(js.length()>0){
-        FirebaseJson json; json.setJsonData(js);
-        FirebaseJsonData val;
-        if(json.get(val,"type")) strncpy(settingsList[settingsCount].type,val.stringValue.c_str(),15);
-        else strcpy(settingsList[settingsCount].type,"Unknown");
-        if(json.get(val,"color")) strncpy(settingsList[settingsCount].color,val.stringValue.c_str(),8);
-        else strcpy(settingsList[settingsCount].color,"ffffff");
-        if(json.get(val,"vibrationPattern")) strncpy(settingsList[settingsCount].vibration,val.stringValue.c_str(),8);
-        else strcpy(settingsList[settingsCount].vibration,"s");
-        Serial.printf("Loaded setting %d: type=%s, color=%s, vibration=%s\n",
-                      settingsCount, settingsList[settingsCount].type,
-                      settingsList[settingsCount].color, settingsList[settingsCount].vibration);
-        settingsCount++;
-      } else {
-        Serial.println("Empty JSON received, stopping load.");
-        break;
-      }
-    } else {
-      Serial.printf("Firebase read failed: %s\n", fbdo.errorReason().c_str());
-      break;
-    }
-    delay(100);
-  }
-  Serial.printf("Loaded %d user settings.\n", settingsCount);
-}
-
-void onSettingsUpdate(FirebaseStream data) {
-  String path = data.dataPath();
-  String event = data.eventType();
-
-  // Ignore keep-alive or root-level refresh events
-  if (path == "/" || path.length() == 0 || !(event == "put" || event == "patch")) {
-    return;
-  }
-
-  static unsigned long lastReload = 0;
-  if (millis() - lastReload < 2000) return;
-  lastReload = millis();
-
-  Serial.printf("Firebase child changed at: %s\n", path.c_str());
-  loadUserSettings();
-}
-
-
-Setting findSettingByType(const char* t) {
-  for(size_t i=0;i<settingsCount;i++)
-    if(strcasecmp(settingsList[i].type,t)==0) return settingsList[i];
-  Setting none={"Unknown","ffffff","s"};
-  Serial.printf("No setting found for type '%s'. Using default.\n", t);
-  return none;
-}
-
-void sendBLEMessage(const Setting &s){
+void sendBLEMessage(const char* soundType){
   if(deviceConnected){
-    String msg = String(s.color) + "|" + String(s.vibration);
-    pCharacteristic->setValue(msg.c_str());
+    pCharacteristic->setValue(soundType);
     pCharacteristic->notify();
-    Serial.printf("BLE message sent: %s\n", msg.c_str());
+    Serial.printf("BLE message sent: %s\n", soundType);
   } else {
     Serial.println("No client connected, message not sent.");
   }
 }
 
-void pushAlertLog(const char* soundType){
-  char path[64]; snprintf(path,sizeof(path),"/users/%s/alerts",USER_ID);
-  FirebaseJson json;
-  json.set("sound",soundType);
-  json.set("timestamp",(int)millis());
-  json.set("device","ESP32_Detector");
-  Serial.printf("Pushing alert to Firebase: %s\n", soundType);
-  if(Firebase.RTDB.pushJSON(&fbdoPush,path,&json))
-    Serial.printf("Alert pushed: %s\n", soundType);
-  else
-    Serial.printf("Failed to push alert: %s\n", fbdoPush.errorReason().c_str());
+// -----------------------------------------------------
+// Edge Impulse inference helper
+// -----------------------------------------------------
+bool runEIInference() {
+  static float audioBuffer[EI_CLASSIFIER_RAW_SAMPLE_COUNT];
+  static size_t sampleIndex = 0;
+  static String lastLabel = "";
+  static uint8_t silentChunks = 0;
+  static uint8_t repeatCount = 0;
+  const uint8_t MIN_REPEATS = 2;
+
+
+  // Temporary chunk buffer for I2S reads
+  int32_t chunk[CHUNK_SAMPLES];
+  size_t bytesRead = 0;
+
+  // ---- Read a chunk of audio from I2S ----
+  esp_err_t res = i2s_read(I2S_PORT, chunk, CHUNK_SAMPLES * sizeof(int32_t), &bytesRead, portMAX_DELAY);
+  if (res != ESP_OK || bytesRead == 0) {
+    return false;
+  }
+
+  size_t samplesRead = bytesRead / 4;
+
+  // ---- Compute max amplitude to detect silence ----
+  int32_t maxVal = 0;
+  for (int i = 0; i < samplesRead; i++) {
+    int32_t s = chunk[i] >> 14;  // Normalize 32-bit INMP441 output
+    int32_t absS = abs(s);
+    if (absS > maxVal) maxVal = absS;
+  }
+  Serial.println(maxVal);
+  
+  if (maxVal < 500) {
+    silentChunks++;
+    if (silentChunks > 200) {
+      sampleIndex = 0;         
+    }
+    return false;
+  } else {
+    silentChunks = 0;          // reset when sound appears
+  }
+
+
+  // ---- Amplify and store audio into EI buffer ----
+  for (size_t i = 0; i < samplesRead && sampleIndex < EI_CLASSIFIER_RAW_SAMPLE_COUNT; i++) {
+    int32_t s = chunk[i] >> 14;
+    audioBuffer[sampleIndex++] = (float)s * 15.0f;   // boost gain
+  }
+
+  // If we haven't filled a full window yet, nothing to classify
+  if (sampleIndex < EI_CLASSIFIER_RAW_SAMPLE_COUNT) {
+    return false;
+  }
+
+  // We have a full window → build signal and run classifier
+  signal_t signal;
+  int err = numpy::signal_from_buffer(audioBuffer, EI_CLASSIFIER_RAW_SAMPLE_COUNT, &signal);
+  if (err != 0) {
+    Serial.println("Failed to create signal from buffer.");
+    sampleIndex = 0; // reset for next window
+    return false;
+  }
+
+  ei_impulse_result_t resultEI;
+  EI_IMPULSE_ERROR eiErr = run_classifier(&signal, &resultEI, false);
+  if (eiErr != EI_IMPULSE_OK) {
+    Serial.printf("run_classifier failed: %d\n", eiErr);
+    sampleIndex = 0;
+    return false;
+  }
+
+  // ---- Print predictions ----
+  Serial.println("Predictions:");
+  float topScore = 0.0f;
+  const char* bestLabel = "UNCERTAIN";
+
+  for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
+    float score = resultEI.classification[ix].value;
+    Serial.printf("  %s: %.2f\n", resultEI.classification[ix].label, score);
+
+    if (score > topScore) {
+      topScore = score;
+      bestLabel = resultEI.classification[ix].label;
+    }
+  }
+
+  // Reset buffer for next window
+  sampleIndex = 0;
+
+  // ---- Confidence threshold ----
+  if (topScore < 0.60f) { 
+    Serial.println("Low confidence — ignoring");
+    return true;
+  }
+
+  if (lastLabel == String(bestLabel)) {
+    repeatCount++;
+  } else {
+    lastLabel = String(bestLabel);
+    repeatCount = 1;
+  }
+
+  if (repeatCount < MIN_REPEATS) {
+    Serial.println("Not enough repeats yet — waiting");
+    return true;
+  }
+  
+  // ---- Cooldown ----
+  if (millis() - lastAlert < ALERT_COOLDOWN) {
+    return true;
+  }
+
+  // ---- Send best label over BLE ----
+  sendBLEMessage(bestLabel);
+  lastAlert = millis();
+
+  return true;
 }
+
 
 // ------------------- Setup -------------------
 void setup(){
   Serial.begin(115200);
   delay(1000);
   Serial.println("Starting Safe&Sound Mic BLE device...");
-
+  
+  pinMode(MIC_LR_PIN, OUTPUT);
+  digitalWrite(MIC_LR_PIN, LOW); // force LEFT channel
   // Audio init
   i2s_install();
   i2s_setpin();
   i2s_start(I2S_PORT);
+  i2s_set_clk(I2S_PORT, 16000, I2S_BITS_PER_SAMPLE_32BIT, I2S_CHANNEL_MONO);
   Serial.println("I2S started successfully.");
 
   // BLE init
@@ -213,73 +238,17 @@ void setup(){
 
   BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);
-  pAdvertising->setMinPreferred(0x12);
-  pAdvertising->setAdvertisementType(ADV_TYPE_IND);
+  //pAdvertising->setScanResponse(true);
+  //pAdvertising->setMinPreferred(0x06);
+  //pAdvertising->setMinPreferred(0x12);
+  //pAdvertising->setAdvertisementType(ADV_TYPE_IND);
   pServer->getAdvertising()->start();
   Serial.println("BLE advertising started. Waiting for connection...");
-
-  // WiFi + Firebase
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int attempt = 0;
-  while(WiFi.status()!=WL_CONNECTED){ 
-    Serial.print(".");
-    delay(500);
-    attempt++;
-    if (attempt % 10 == 0) Serial.printf(" (%d sec elapsed)\n", attempt/2);
-  }
-  Serial.println();
-  Serial.println("WiFi connected: " + WiFi.localIP().toString());
-  setupFirebase();
-  loadUserSettings();
-  if (!Firebase.RTDB.beginStream(&fbdo, "/users/P4OTxL5xMVSeljSaqTN3PINrEh12/settings")) {
-    Serial.printf("Stream start failed: %s\n", fbdo.errorReason().c_str());
-  } else {
-    Firebase.RTDB.setStreamCallback(&fbdo, onSettingsUpdate, nullptr);
-    Serial.println("Firebase stream listener started.");
-  }
   Serial.println("Setup complete. Entering main loop.");
 }
 
 // ------------------- Loop -------------------
-void loop(){
-  int16_t sample[NUM_SAMPLES]; size_t bytes_read; int64_t sum=0;
-  esp_err_t result = i2s_read(I2S_PORT,&sample,sizeof(sample),&bytes_read,portMAX_DELAY);
-    
-  if (result == ESP_OK) {
-    int16_t samples_read = bytes_read / 8;
-    if (samples_read > 0) {
-      float mean = 0;
-      for (int16_t i = 0; i < samples_read; ++i) {
-        mean += (sample[i]);
-      }
-      mean /= samples_read;
-
-      const char* detectedType = nullptr;
-
-      if (mean > 12000) {
-        detectedType = "Fire Alarm";
-      } 
-      else if (mean > 8000) {
-        detectedType = "Siren";
-      } 
-      else if (mean > 4000) {
-        detectedType = "Timer";
-      } 
-      else if (mean > 2000) {
-        detectedType = "Microwave";
-      }
-
-      if (detectedType && millis() - lastAlert > ALERT_COOLDOWN) {
-        Serial.printf("Sound Detected: %s (%.0f)\n", detectedType, mean);
-        Setting match = findSettingByType(detectedType);
-        sendBLEMessage(match);
-        pushAlertLog(detectedType);
-        lastAlert = millis();
-      }
-    }
-  }
-  delay(20);
+void loop() {
+  runEIInference();
+  delay(10);
 }
