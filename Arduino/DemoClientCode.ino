@@ -1,21 +1,26 @@
+#pragma GCC optimize ("Os")    // Optimize for size
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 #include <BLERemoteCharacteristic.h>
-
+#include <WiFi.h>
+#include "driver/ledc.h"
+#include <Firebase_ESP_Client.h>
+#include "secrets.h"  // define WIFI_SSID, WIFI_PASSWORD, API_KEY, DATABASE_URL, USER_EMAIL, USER_PASSWORD, USER_ID
 
 // ==== Pin map ====
-const int LED_RED    = 19;
-const int LED_BLUE   = 21;
-const int LED_YELLOW = 22;
-const int LED_GREEN  = 23;
-const int VIB_PIN    = 25;
+const int LED_R = 6;    // D3
+const int LED_G = 5;    // D4
+const int LED_B = 4;    // D5
+const int VIB_PIN = 21; // D6
 
+// PWM settings
+const int freq = 5000;
+const int resolution = 8;
 
 // ==== BLE UUIDs ====
 static BLEUUID serviceUUID("7b58dad6-aa86-4330-9390-c2edf92f50ef");
 static BLEUUID charUUID   ("21c88cf2-1bba-4d5b-a70a-aa555d43921b");
-
 
 // ==== Globals ====
 BLEClient* pClient = nullptr;
@@ -24,29 +29,66 @@ BLEAdvertisedDevice* targetDevice = nullptr;
 bool connected = false;
 bool shouldConnect = false;
 unsigned long lastConnectionAttempt = 0;
-const unsigned long CONNECTION_RETRY_DELAY = 5000; // 5 seconds
+const unsigned long CONNECTION_RETRY_DELAY = 5000; // 5s
 
+// ==== Firebase ====
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
 
-// ==== LED + Vibration helpers ====
-void allLedsOff() {
-  digitalWrite(LED_RED, HIGH);    
-  digitalWrite(LED_BLUE, HIGH);
-  digitalWrite(LED_YELLOW, HIGH);
-  digitalWrite(LED_GREEN, HIGH);
+// ==== Sound Settings ====
+struct Setting { char type[16]; char color[9]; char vibration[9]; };
+#define MAX_SETTINGS 10
+Setting settingsList[MAX_SETTINGS];
+size_t settingsCount = 0;
+
+// ==== Helpers ====
+// ====================================================================================
+// RGB LED PWM Setup
+// ====================================================================================
+void setupRGBPWM() {
+ ledcAttach(LED_R, freq, resolution);
+  ledcAttach(LED_G, freq, resolution);
+  ledcAttach(LED_B, freq, resolution);
+
+  // OFF state for common anode
+  ledcWrite(LED_R, 255);
+  ledcWrite(LED_G, 255);
+  ledcWrite(LED_B, 255);
 }
 
+// ====================================================================================
+// Convert Firebase Hex → RGB PWM Output
+// ====================================================================================
+void setLedColor(String hexColor) {
+  hexColor.toLowerCase();
 
-// For now, pick LED based on BLE color hex
-void setLedColor(String colorHex) {
-  allLedsOff();
-  colorHex.toLowerCase();
+  // Strip alpha channel if ARGB (e.g., ff2196f3)
+  if (hexColor.length() == 8)
+    hexColor = hexColor.substring(2);
 
+  if (hexColor.length() != 6) {
+    Serial.println("Invalid color, using red");
+    ledcWrite(LED_R, 0);
+    ledcWrite(LED_G, 255);
+    ledcWrite(LED_B, 255);
+    return;
+  }
 
-  // match Firebase color hex to approximate LED
-  if (colorHex == "ff2196f3") digitalWrite(LED_BLUE, LOW);       // blue
-  else if (colorHex == "ffffeb3b") digitalWrite(LED_YELLOW, LOW); // amber/yellow
-  else if (colorHex == "ff4caf50") digitalWrite(LED_GREEN, LOW);  // green
-  else digitalWrite(LED_RED, LOW); // default red for unknown
+  int r = strtol(hexColor.substring(0,2).c_str(), NULL, 16);
+  int g = strtol(hexColor.substring(2,4).c_str(), NULL, 16);
+  int b = strtol(hexColor.substring(4,6).c_str(), NULL, 16);
+
+  // COMMON ANODE → INVERTED PWM
+  r = 255 - r;
+  g = 255 - g;
+  b = 255 - b;
+
+  ledcWrite(LED_R, r);
+  ledcWrite(LED_G, g);
+  ledcWrite(LED_B, b);
+
+  Serial.printf("Set RGB (inverted PWM): %d %d %d\n", r, g, b);
 }
 
 
@@ -63,74 +105,91 @@ void vibratePattern(String pattern) {
   }
 }
 
-
-// ==== Notification Callback ====
-void notifyCallback(BLERemoteCharacteristic* rc, uint8_t* data, size_t len, bool isNotify) {
-  String msg((char*)data, len);
-  msg.trim();
-  Serial.println("Notification received: " + msg);
-
-
-  // Expected format now: color|vibration
-  int delim = msg.indexOf('|');
-  if (delim < 0) {
-    Serial.println("Unknown message format, skipping");
-    return;
-  }
-
-
-  String color = msg.substring(0, delim);
-  String vibration = msg.substring(delim + 1);
-
-
-  Serial.printf("Color=%s | Pattern=%s\n", color.c_str(), vibration.c_str());
-
-
-  setLedColor(color);
-  vibratePattern(vibration);
-  delay(500);
-  allLedsOff();
+Setting findSettingByType(const char* t) {
+  for(size_t i=0;i<settingsCount;i++)
+    if(strcasecmp(settingsList[i].type,t)==0) return settingsList[i];
+  Setting none={"Unknown","ffffff","short"};
+  return none;
 }
 
+// ==== Firebase Setup ====
+void setupFirebase() {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  while(WiFi.status()!=WL_CONNECTED){ Serial.print("."); delay(500);}
+  Serial.println("\nWiFi connected");
 
-// ==== Client Disconnect Callback ====
-class MyClientCallback : public BLEClientCallbacks {
-  void onConnect(BLEClient* pclient) {
-    Serial.println("Connected to BLE server");
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+  Serial.println("Firebase initialized");
+}
+
+void loadSettingsFromFirebase() {
+  settingsCount = 0;
+  for(int i=0;i<MAX_SETTINGS;i++){
+    char path[80]; snprintf(path,sizeof(path),"/users/%s/settings/%d",USER_ID,i);
+    if(Firebase.RTDB.getJSON(&fbdo,path)){
+      String js = fbdo.jsonString();
+      if(js.length()>0){
+        FirebaseJson json; json.setJsonData(js);
+        FirebaseJsonData val;
+        if(json.get(val,"type")) strncpy(settingsList[settingsCount].type,val.stringValue.c_str(),15);
+        else strcpy(settingsList[settingsCount].type,"Unknown");
+        if(json.get(val,"color")) strncpy(settingsList[settingsCount].color,val.stringValue.c_str(),8);
+        else strcpy(settingsList[settingsCount].color,"ffffff");
+        if(json.get(val,"vibrationPattern")) strncpy(settingsList[settingsCount].vibration,val.stringValue.c_str(),8);
+        else strcpy(settingsList[settingsCount].vibration,"short");
+        settingsCount++;
+      } else break;
+    } else break;
+    delay(50);
   }
+  Serial.printf("Loaded %d settings from Firebase\n", settingsCount);
+}
 
+// ==== BLE Notification Callback ====
+void notifyCallback(BLERemoteCharacteristic* rc, uint8_t* data, size_t len, bool isNotify) {
+  String sound((char*)data,len);
+  sound.trim();
+  Serial.println("Notification received: " + sound);
 
-  void onDisconnect(BLEClient* pclient) {
+  Setting s = findSettingByType(sound.c_str());
+  Serial.printf("Action -> Color: %s | Vibration: %s\n", s.color, s.vibration);
+
+  setLedColor(String(s.color));
+  vibratePattern(String(s.vibration));
+  delay(500);
+  // RGB stays lit briefly, then off:
+  ledcWrite(LED_R, 255);
+  ledcWrite(LED_G, 255);
+  ledcWrite(LED_B, 255);
+}
+
+// ==== BLE Client Callbacks ====
+class MyClientCallback : public BLEClientCallbacks {
+  void onConnect(BLEClient* pclient){ Serial.println("Connected to BLE server"); }
+  void onDisconnect(BLEClient* pclient){
     connected = false;
-    Serial.println("Disconnected from server, restarting scan...");
+    Serial.println("Disconnected, restarting scan...");
     BLEDevice::getScan()->start(0, nullptr, false);
   }
 };
 
-
 // ==== Connect to Detector ====
 void connectToDetector(BLEAdvertisedDevice advertisedDevice) {
-  Serial.println("Attempting to connect to Detector...");
-
-
   BLEDevice::getScan()->stop();
   delay(500);
-
-
   BLEAddress serverAddress = advertisedDevice.getAddress();
-  Serial.print("Connecting to address: ");
-  Serial.println(serverAddress.toString().c_str());
-
-
-  if (pClient == nullptr) {
+  if(pClient==nullptr){
     pClient = BLEDevice::createClient();
     pClient->setClientCallbacks(new MyClientCallback());
-    Serial.println("Created BLE client");
   }
-
-
-  bool success = pClient->connect(serverAddress);
-  if (!success) {
+  if(!pClient->connect(serverAddress)){
     Serial.println("Connection failed!");
     pClient->disconnect();
     lastConnectionAttempt = millis();
@@ -138,62 +197,22 @@ void connectToDetector(BLEAdvertisedDevice advertisedDevice) {
     return;
   }
 
-
-  Serial.println("Connected! Discovering services...");
-  delay(1000);
-
-
   BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
-  if (!pRemoteService) {
-    Serial.println("Service UUID not found!");
-    pClient->disconnect();
-    lastConnectionAttempt = millis();
-    BLEDevice::getScan()->start(0, nullptr, false);
-    return;
-  }
-  Serial.println("Service found");
-
-
+  if(!pRemoteService){ Serial.println("Service not found"); pClient->disconnect(); return;}
   pRemoteChar = pRemoteService->getCharacteristic(charUUID);
-  if (!pRemoteChar) {
-    Serial.println("Characteristic UUID not found!");
-    pClient->disconnect();
-    lastConnectionAttempt = millis();
-    BLEDevice::getScan()->start(0, nullptr, false);
-    return;
-  }
-  Serial.println("Characteristic found");
-
-
-  if (pRemoteChar->canNotify()) {
+  if(pRemoteChar && pRemoteChar->canNotify()){
     pRemoteChar->registerForNotify(notifyCallback);
     Serial.println("Subscribed to notifications");
-  } else {
-    Serial.println("Characteristic cannot notify");
   }
-
-
   connected = true;
-  Serial.println("Receiver ready and listening");
-
-
-  setLedColor("ff4caf50");  // green LED for connected
-  delay(500);
-  allLedsOff();
 }
-
 
 // ==== Scan Callback ====
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (connected || shouldConnect) return;
-   
-    Serial.print("Found device: ");
-    Serial.println(advertisedDevice.toString().c_str());
-   
-    if (advertisedDevice.haveServiceUUID() &&
-        advertisedDevice.isAdvertisingService(serviceUUID)) {
-      Serial.println("Detector found via UUID");
+  void onResult(BLEAdvertisedDevice advertisedDevice){
+    if(connected || shouldConnect) return;
+    if(advertisedDevice.haveServiceUUID() &&
+       advertisedDevice.isAdvertisingService(serviceUUID)){
       targetDevice = new BLEAdvertisedDevice(advertisedDevice);
       shouldConnect = true;
       BLEDevice::getScan()->stop();
@@ -201,63 +220,43 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
-
 // ==== Setup ====
 void setup() {
   Serial.begin(115200);
   delay(1000);
- 
-  pinMode(LED_RED, OUTPUT);
-  pinMode(LED_BLUE, OUTPUT);
-  pinMode(LED_YELLOW, OUTPUT);
-  pinMode(LED_GREEN, OUTPUT);
   pinMode(VIB_PIN, OUTPUT);
-  allLedsOff();
+  digitalWrite(VIB_PIN, LOW);
 
+  setupRGBPWM();
 
   Serial.println("Receiver BLE Client starting...");
   BLEDevice::init("SafeSound_Receiver");
 
+  setupFirebase();
+  loadSettingsFromFirebase();
 
   BLEScan* pScan = BLEDevice::getScan();
   pScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pScan->setActiveScan(true);
   pScan->setInterval(100);
   pScan->setWindow(99);
-
-
-  Serial.println("Starting continuous scan...");
   pScan->start(0, nullptr, false);
 }
-
 
 // ==== Loop ====
 void loop() {
   if (shouldConnect && !connected && targetDevice != nullptr) {
     if (millis() - lastConnectionAttempt > CONNECTION_RETRY_DELAY) {
-      Serial.println("Queued connection triggered");
       connectToDetector(*targetDevice);
-      delete targetDevice;
-      targetDevice = nullptr;
-      shouldConnect = false;
+      delete targetDevice; targetDevice = nullptr; shouldConnect = false;
     }
   }
 
-
-  if (connected) {
-    if (!pClient->isConnected()) {
-      Serial.println("Connection lost, restarting scan...");
-      connected = false;
-      BLEDevice::getScan()->start(0, nullptr, false);
-    } else {
-      Serial.println("Connected and listening...");
-    }
-  } else {
-    Serial.println("Scanning for detector...");
+  if (connected && !pClient->isConnected()) {
+    Serial.println("Connection lost, restarting scan...");
+    connected = false;
+    BLEDevice::getScan()->start(0, nullptr, false);
   }
-
 
   delay(2000);
 }
-
-
