@@ -15,14 +15,16 @@ class AppState {
   factory AppState.sample() {
     final s = AppState();
     s.settings = [
-      AlertSetting(type: 'Fire Alarm', color: Colors.red, vibrationPattern: 'long'),
+      AlertSetting(type: 'Car_horn', color: Colors.red, vibrationPattern: 'long'),
       AlertSetting(type: 'Siren', color: Colors.orange, vibrationPattern: 'repeat'),
-      AlertSetting(type: 'Timer', color: Colors.blue, vibrationPattern: 'short'),
+      AlertSetting(type: 'Door_knock', color: Colors.blue, vibrationPattern: 'short'),
+      AlertSetting(type: 'Alarm_clock', color: Colors.green, vibrationPattern: 'long'),
     ];
     s.logs = [
-      AlertItem(type: 'Fire Alarm', time: DateTime.now().subtract(Duration(hours: 2))),
+      AlertItem(type: 'Car_horn', time: DateTime.now().subtract(Duration(hours: 2))),
       AlertItem(type: 'Siren', time: DateTime.now().subtract(Duration(days: 1, hours: 1))),
-      AlertItem(type: 'Timer', time: DateTime.now().subtract(Duration(days: 1, hours: 12))),
+      AlertItem(type: 'Door_knock', time: DateTime.now().subtract(Duration(days: 1, hours: 12))),
+      AlertItem(type: 'Alarm_clock', time: DateTime.now().subtract(Duration(days: 1, hours: 12))),
     ];
     s.pairedDeviceName = 'ESP32_Wrist_01';
     s.deviceBattery = 82;
@@ -72,13 +74,16 @@ class AppState {
   }
 
   void ensureDefaultSounds() {
-    final defaults = ['Fire Alarm', 'Siren', 'Timer'];
-    for (var type in defaults) {
-      if (!settings.any((s) => s.type == type)) {
+    final defaults = ['Car_horn', 'Siren', 'Door_knock', 'Alarm_clock'];
+    final defaultColors = [Colors.red, Colors.orange, Colors.blue, Colors.green];
+    final defaultPatterns = ['long', 'repeat', 'short', 'long'];
+    
+    for (int i = 0; i < defaults.length; i++) {
+      if (!settings.any((s) => s.type == defaults[i])) {
         settings.add(AlertSetting(
-          type: type,
-          color: Colors.red,
-          vibrationPattern: 'long',
+          type: defaults[i],
+          color: defaultColors[i],
+          vibrationPattern: defaultPatterns[i],
         ));
       }
     }

@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
 import '../models/app_state.dart';
 import '../models/alert_item.dart';
-import 'package:intl/intl.dart';
 
 class HomeScreen extends StatefulWidget {
   final AppState appState;
-  const HomeScreen({Key? key, required this.appState}) : super(key: key);
+  const HomeScreen({super.key, required this.appState});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -36,19 +36,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (data != null && data is Map) {
         data.forEach((key, value) {
+          // Use current timestamp since millis() is not absolute
+          final alertTime = DateTime.now();
+
           widget.appState.logs.add(AlertItem(
             type: value['sound'] ?? 'Unknown',
-            time: value['timestamp'] != null
-                ? DateTime.fromMillisecondsSinceEpoch(
-                    value['timestamp'], isUtc: true)
-                    .toLocal()
-                : DateTime.now(),
+            time: alertTime,
           ));
         });
+
         widget.appState.logs.sort((a, b) => b.time.compareTo(a.time));
       }
 
-      setState(() {}); // rebuild HomeScreen when logs update
+      setState(() {});
     });
   }
 
@@ -60,10 +60,10 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Safe&Sound'),
         actions: [
-          // Removed Bluetooth IconButton
           IconButton(
-              onPressed: () => Navigator.pushNamed(context, '/customize'),
-              icon: const Icon(Icons.settings)),
+            onPressed: () => Navigator.pushNamed(context, '/customize'),
+            icon: const Icon(Icons.settings),
+          ),
         ],
       ),
       body: Padding(
@@ -71,8 +71,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Center(
-              child: const Text(
+            const Center(
+              child: Text(
                 'Hello — quick recent alerts',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
@@ -89,9 +89,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   : ListView.builder(
                       itemCount: recentAlerts.length,
                       itemBuilder: (ctx, i) {
-                        final AlertItem item = recentAlerts[i];
+                        final item = recentAlerts[i];
                         return ListTile(
-                          leading: Icon(_iconForType(item.type)),
+                          leading: const Icon(Icons.volume_up), // sound icon
                           title: Text(item.type),
                           subtitle: Text(
                             DateFormat('yyyy-MM-dd HH:mm:ss')
@@ -111,18 +111,5 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  IconData _iconForType(String type) {
-    switch (type.toLowerCase()) {
-      case 'fire alarm':
-        return Icons.local_fire_department;
-      case 'doorbell':
-        return Icons.notifications;
-      case 'siren':
-        return Icons.sos;
-      default:
-        return Icons.volume_up;
-    }
   }
 }

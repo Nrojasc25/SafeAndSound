@@ -7,7 +7,7 @@ import 'signup_screen.dart';
 class LoginScreen extends StatefulWidget {
   final VoidCallback onLogin;
   final AppState appState; // AppState instance
-  const LoginScreen({Key? key, required this.onLogin, required this.appState}) : super(key: key);
+  const LoginScreen({super.key, required this.onLogin, required this.appState});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();

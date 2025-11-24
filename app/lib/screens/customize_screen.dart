@@ -6,7 +6,7 @@ import '../models/settings.dart';
 
 class CustomizeScreen extends StatefulWidget {
   final AppState appState;
-  const CustomizeScreen({Key? key, required this.appState}) : super(key: key);
+  const CustomizeScreen({super.key, required this.appState});
 
   @override
   State<CustomizeScreen> createState() => _CustomizeScreenState();
@@ -17,7 +17,7 @@ class _CustomizeScreenState extends State<CustomizeScreen> {
   String? editingSound;
   final DatabaseReference ref = FirebaseDatabase.instance.ref();
 
-  final List<String> defaultSounds = ['Fire Alarm', 'Siren', 'Timer'];
+  final List<String> defaultSounds = ['Alarm Clock', 'Car Horn', 'Door Knock', 'Siren'];
 
   @override
   void initState() {

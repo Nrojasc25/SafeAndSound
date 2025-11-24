@@ -27,7 +27,7 @@ Future<void> main() async {
 }
 
 class SafeAndSoundApp extends StatefulWidget {
-  const SafeAndSoundApp({Key? key}) : super(key: key);
+  const SafeAndSoundApp({super.key});
 
   @override
   State<SafeAndSoundApp> createState() => _SafeAndSoundAppState();

@@ -7,7 +7,7 @@ import '../models/alert_item.dart';
 
 class LogScreen extends StatefulWidget {
   final AppState appState;
-  const LogScreen({Key? key, required this.appState}) : super(key: key);
+  const LogScreen({super.key, required this.appState});
 
   @override
   State<LogScreen> createState() => _LogScreenState();
@@ -36,15 +36,16 @@ class _LogScreenState extends State<LogScreen> {
 
       if (data != null && data is Map) {
         data.forEach((key, value) {
+          final alertTime = DateTime.now(); // fallback time
+          final color = value['color'] ?? 'ffffff';
+
           widget.appState.logs.add(AlertItem(
             type: value['sound'] ?? 'Unknown',
-            time: value['timestamp'] != null
-                ? DateTime.fromMillisecondsSinceEpoch(value['timestamp'], isUtc: true).toLocal()
-                : value['time'] != null
-                    ? DateTime.fromMillisecondsSinceEpoch(value['time'], isUtc: true).toLocal()
-                    : DateTime.now(),
+            time: alertTime,
+            color: color,
           ));
         });
+
         widget.appState.logs.sort((a, b) => b.time.compareTo(a.time));
       }
 
@@ -62,19 +63,6 @@ class _LogScreenState extends State<LogScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('All alerts cleared from Firebase')),
     );
-  }
-
-  IconData _iconForType(String type) {
-    switch (type.toLowerCase()) {
-      case 'fire alarm':
-        return Icons.local_fire_department;
-      case 'doorbell':
-        return Icons.notifications;
-      case 'siren':
-        return Icons.sos;
-      default:
-        return Icons.volume_up;
-    }
   }
 
   @override
@@ -97,12 +85,20 @@ class _LogScreenState extends State<LogScreen> {
                     itemCount: logs.length,
                     itemBuilder: (ctx, i) {
                       final log = logs[i];
-                      final formattedTime =
-                          DateFormat('yyyy-MM-dd HH:mm:ss').format(log.time);
                       return ListTile(
-                        leading: Icon(_iconForType(log.type)),
+                        leading: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(int.parse('0xff${log.color}')),
+                            border: Border.all(color: Colors.black26),
+                          ),
+                        ),
                         title: Text(log.type),
-                        subtitle: Text(formattedTime),
+                        subtitle: Text(
+                          DateFormat('yyyy-MM-dd HH:mm:ss').format(log.time),
+                        ),
                       );
                     },
                   ),
