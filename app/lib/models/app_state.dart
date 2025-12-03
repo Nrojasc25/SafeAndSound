@@ -35,7 +35,7 @@ class AppState {
   List<Map<String, dynamic>> settingsToList() {
     return settings.map((s) => {
       'type': s.type,
-      'color': s.color.value.toRadixString(16).padLeft(8, '0'),
+      'color': _mapColor(s.color),
       'vibrationPattern': s.vibrationPattern,
     }).toList();
   }
@@ -45,7 +45,7 @@ class AppState {
     for (var item in data) {
       settings.add(AlertSetting(
         type: item['type'],
-        color: Color(int.parse(item['color'], radix: 16)),
+        color: _mapHexToColor(item['color']),
         vibrationPattern: item['vibrationPattern'],
       ));
     }
@@ -88,4 +88,26 @@ class AppState {
       }
     }
   }
+
+  String _mapColor(Color c) {
+  // Map Flutter Colors → custom hex codes YOU want to send to Firebase
+  if (c == Colors.red) return 'ffff0000';
+  if (c == Colors.green) return 'ff00ff00';
+  if (c == Colors.blue) return 'ff0000ff';
+  if (c == Colors.yellow) return 'ffffff00';
+  if (c == Colors.orange) return 'ffffa500';
+  return 'ffffffff'; // default fallback
+  }
+
+  Color _mapHexToColor(String hex) {  
+  switch (hex) {
+    case 'ffff0000': return Colors.red;
+    case 'ff00ff00': return Colors.green;
+    case 'ff0000ff': return Colors.blue;
+    case 'ffffff00': return Colors.yellow;
+    case 'ffffa500': return Colors.orange;
+  }
+
+  return Colors.red;
+}
 }

@@ -10,7 +10,7 @@
 // =============================
 // DEBUG
 // =============================
-#define DEBUG 0
+#define DEBUG 1
 #if DEBUG
   #define DPRINT(x) Serial.print(x)
   #define DPRINTLN(x) Serial.println(x)
@@ -22,10 +22,10 @@
 // =============================
 // HARDWARE
 // =============================
-const int LED_R = 25;
-const int LED_G = 26;
-const int LED_B = 27;
-const int VIB_PIN = 14;
+const int LED_R = 6;    // D3
+const int LED_G = 4;    // D4
+const int LED_B = 5;    // D5
+const int VIB_PIN = 21; // D6
 
 // =============================
 // BLE
@@ -36,6 +36,9 @@ static BLEUUID charUUID("21c88cf2-1bba-4d5b-a70a-aa555d43921b");
 BLEClient* pClient = nullptr;
 BLERemoteCharacteristic* pRemoteChar = nullptr;
 bool connected = false;
+bool firebaseInitialized = false;
+unsigned long lastWifiAttempt = 0;
+const unsigned long WIFI_RETRY_INTERVAL = 5000; 
 
 volatile bool alertPending = false;
 char alertSound[32] = {0};
@@ -53,7 +56,7 @@ struct Setting {
 Setting settingsList[MAX_SETTINGS];
 size_t settingsCount = 0;
 unsigned long lastSettingsRefresh = 0;
-#define SETTINGS_REFRESH_INTERVAL 30000
+#define SETTINGS_REFRESH_INTERVAL 10000
 
 // =============================
 // FIREBASE
@@ -83,9 +86,9 @@ void setLedColor(const char* hex) {
   int len = strlen(hex);
   if (len == 8) hex += 2;
   if (strlen(hex) != 6) {
-    ledcWrite(0, 0);
-    ledcWrite(1, 255);
-    ledcWrite(2, 255);
+    ledcWrite(LED_R, 0);
+    ledcWrite(LED_G, 255);
+    ledcWrite(LED_B, 255);
     return;
   }
 
@@ -97,9 +100,9 @@ void setLedColor(const char* hex) {
   buf[0] = hex[4]; buf[1] = hex[5];
   int b = 255 - strtol(buf, NULL, 16);
 
-  ledcWrite(0, r);
-  ledcWrite(1, g);
-  ledcWrite(2, b);
+  ledcWrite(LED_R, r);
+  ledcWrite(LED_G, g);
+  ledcWrite(LED_B, b);
 }
 
 // =============================
@@ -168,8 +171,8 @@ void setupWiFi() {
 void setupFirebase() {
   DPRINTLN("Setting up Firebase...");
   
-  config.api_key = FIREBASE_API_KEY;
-  config.database_url = FIREBASE_DATABASE_URL;
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
   auth.user.email = USER_EMAIL;
   auth.user.password = USER_PASSWORD;
 
@@ -366,6 +369,7 @@ void setup() {
   
   if (WiFi.status() == WL_CONNECTED) {
     setupFirebase();
+    firebaseInitialized = true;
     delay(1000);
     loadSettingsFromFirebase();
   }
@@ -386,10 +390,24 @@ void loop() {
 
   // Reconnect WiFi if needed
   if (WiFi.status() != WL_CONNECTED) {
-    DPRINTLN("WiFi disconnected, trying to reconnect...");
-    setupWiFi(); // your existing function
-    // small delay to avoid tight loop
-    delay(200);
+    ledcWrite(LED_R, 0);
+    ledcWrite(LED_G, 255);
+    ledcWrite(LED_B, 255); 
+
+    if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL) {
+      DPRINTLN("WiFi disconnected, trying to reconnect...");
+      setupWiFi();
+      lastWifiAttempt = millis();
+    }
+    firebaseInitialized = false;
+    return;
+  }
+
+  if (!firebaseInitialized && WiFi.status() == WL_CONNECTED) {
+    setupFirebase();
+    loadSettingsFromFirebase();
+    firebaseInitialized = true;
+    DPRINTLN("Firebase initialized in loop()");
   }
 
   // If an alert was posted by the BLE callback, handle it here
@@ -437,12 +455,6 @@ void loop() {
       DPRINTLN("Skipping Firebase push (no WiFi)");
     }
 
-    // restore LED to "off" (common-anode) after the event
-    // KEEP using the same channel numbers you've been using (0,1,2)
-    ledcWrite(0, 255);
-    ledcWrite(1, 255);
-    ledcWrite(2, 255);
-
     DPRINTLN("Alert handled.");
   }
   // If BLE not connected, try to connect (keeps your previous behavior)
@@ -451,6 +463,9 @@ void loop() {
     // back off a bit so we don't hammer BLE connect
     delay(3000);
   }
+  ledcWrite(LED_R, 255);
+  ledcWrite(LED_G, 255);
+  ledcWrite(LED_B, 255);
 
   // Periodic settings refresh while idle
   if (millis() - lastSettingsRefresh > SETTINGS_REFRESH_INTERVAL) {

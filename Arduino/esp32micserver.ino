@@ -89,6 +89,14 @@ void sendBLEMessage(const char* soundType){
   }
 }
 
+float getMinThresholdForLabel(const char* label) {
+  if (strcmp(label, "Siren") == 0)      return 0.95f;
+  if (strcmp(label, "Car_horn") == 0)   return 0.80f;
+  if (strcmp(label, "Door_knock") == 0) return 0.95f;
+  if (strcmp(label, "Alarm_clock") == 0)return 0.70f;
+  return 0.99f; // everything else basically never fires
+}
+
 // -----------------------------------------------------
 // Edge Impulse inference helper
 // -----------------------------------------------------
@@ -122,7 +130,7 @@ bool runEIInference() {
   }
   Serial.println(maxVal);
   
-  if (maxVal < 500) {
+  if (maxVal < 1200) {
     silentChunks++;
     if (silentChunks > 200) {
       sampleIndex = 0;         
@@ -164,6 +172,7 @@ bool runEIInference() {
   // ---- Print predictions ----
   Serial.println("Predictions:");
   float topScore = 0.0f;
+  float secondScore = 0.0f;
   const char* bestLabel = "UNCERTAIN";
 
   for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
@@ -171,6 +180,7 @@ bool runEIInference() {
     Serial.printf("  %s: %.2f\n", resultEI.classification[ix].label, score);
 
     if (score > topScore) {
+      secondScore = topScore;
       topScore = score;
       bestLabel = resultEI.classification[ix].label;
     }
@@ -180,9 +190,14 @@ bool runEIInference() {
   sampleIndex = 0;
 
   // ---- Confidence threshold ----
-  if (topScore < 0.60f) { 
+  float minThresh = getMinThresholdForLabel(bestLabel);
+  if (topScore < minThresh) { 
     Serial.println("Low confidence — ignoring");
     return true;
+  }
+  if (topScore - secondScore < 0.15f) {
+  Serial.println("Top class not separated enough — ignoring");
+  return true;
   }
 
   if (lastLabel == String(bestLabel)) {
@@ -208,7 +223,6 @@ bool runEIInference() {
 
   return true;
 }
-
 
 // ------------------- Setup -------------------
 void setup(){
